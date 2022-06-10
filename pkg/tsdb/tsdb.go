@@ -5,6 +5,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/spenczar/tdigest"
 	"go.k6.io/k6/metrics"
 )
 
@@ -169,21 +170,33 @@ func (rs *RateSeries) Value() float64 {
 }
 
 type TrendSeries struct {
-	rwm   sync.RWMutex
-	inner *metrics.TrendSink // TODO: move to histogram
+	rwm      sync.RWMutex
+	td       *tdigest.TDigest
+	count    int
+	sum, avg float64
+	max, min float64
 }
 
 func NewTrendSeries(metric string, tags TagSet) *TimeSeries {
 	s := newTimeSeries(metric, tags)
 	s.Sink = &TrendSeries{
-		inner: &metrics.TrendSink{},
+		td: tdigest.New(),
 	}
 	return s
 }
 
 func (t *TrendSeries) Add(v float64) {
 	t.rwm.Lock()
-	t.inner.Add(metrics.Sample{Value: v})
+	t.td.Add(v, 1)
+	t.count += 1
+	t.sum += v
+	t.avg = t.sum / float64(t.count)
+	if v > t.max {
+		t.max = v
+	}
+	if t.count == 1 || v < t.min {
+		t.min = v
+	}
 	t.rwm.Unlock()
 }
 
@@ -199,21 +212,14 @@ func (t *TrendSeries) onRLock(f func() float64) float64 {
 	return v
 }
 
-func (t *TrendSeries) Min() float64 { return t.onRLock(func() float64 { return t.inner.Min }) }
-func (t *TrendSeries) Max() float64 { return t.onRLock(func() float64 { return t.inner.Max }) }
-func (t *TrendSeries) Avg() float64 { return t.onRLock(func() float64 { return t.inner.Avg }) }
+func (t *TrendSeries) Min() float64 { return t.onRLock(func() float64 { return t.min }) }
+func (t *TrendSeries) Max() float64 { return t.onRLock(func() float64 { return t.max }) }
+func (t *TrendSeries) Avg() float64 { return t.onRLock(func() float64 { return t.avg }) }
 
 func (t *TrendSeries) Med() float64 {
-	t.rwm.Lock()
-	defer t.rwm.Unlock()
-	t.inner.Calc()
-	return t.inner.Med
+	return t.onRLock(func() float64 { return t.td.Quantile(0.5) })
 }
 
-// P calculates the given percentile of the time series.
 func (t *TrendSeries) P(pct float64) float64 {
-	t.rwm.Lock()
-	defer t.rwm.Unlock()
-	t.inner.Calc()
-	return t.inner.P(pct)
+	return t.onRLock(func() float64 { return t.td.Quantile(pct) })
 }
