@@ -34,6 +34,8 @@ type Config struct {
 	User     null.String `json:"user" envconfig:"K6_PROMETHEUS_USER"`
 	Password null.String `json:"password" envconfig:"K6_PROMETHEUS_PASSWORD"`
 
+	BearerToken null.String `json:"bearerToken" envconfig:"K6_PROMETHEUS_BEARERTOKEN"`
+
 	FlushPeriod types.NullDuration `json:"flushPeriod" envconfig:"K6_PROMETHEUS_FLUSH_PERIOD"`
 
 	KeepTags    null.Bool `json:"keepTags" envconfig:"K6_KEEP_TAGS"`
@@ -49,6 +51,7 @@ func NewConfig() Config {
 		CACert:                null.NewString("", false),
 		User:                  null.NewString("", false),
 		Password:              null.NewString("", false),
+		BearerToken:           null.NewString("", false),
 		FlushPeriod:           types.NullDurationFrom(defaultFlushPeriod),
 		KeepTags:              null.BoolFrom(true),
 		KeepNameTag:           null.BoolFrom(false),
@@ -76,6 +79,12 @@ func (conf Config) ConstructRemoteConfig() (*remote.ClientConfig, error) {
 			Password: promConfig.Secret(conf.Password.String),
 		}
 	}
+
+	// if at least valid token was configured, use bearer auth
+	if conf.BearerToken.Valid {
+		httpConfig.BearerToken = conf.BearerToken.String
+	}
+
 	// TODO: consider if the auth logic should be enforced here
 	// (e.g. if insecureSkipTLSVerify is switched off, then check for non-empty certificate file and auth, etc.)
 
@@ -276,6 +285,10 @@ func GetConsolidatedConfig(jsonRawConf json.RawMessage, env map[string]string, a
 
 	if password, passwordDefined := env["K6_PROMETHEUS_PASSWORD"]; passwordDefined {
 		result.Password = null.StringFrom(password)
+	}
+
+	if bearerToken, bearerTokenDefined := env["K6_PROMETHEUS_BEARERTOKEN"]; bearerTokenDefined {
+		result.BearerToken = null.StringFrom(bearerToken)
 	}
 
 	if b, err := getEnvBool(env, "K6_KEEP_TAGS"); err != nil {
